@@ -1,6 +1,6 @@
-fastapi==0.118.0
-uvicorn[standard]==0.34.0
-pypdf==6.14.2
+fastapi==0.141.1
+uvicorn[standard]==0.52.3
+pypdf==6.16.1
 pydantic==2.13.4
 httpx==0.28.1
-python-multipart==0.0.20
+python-multipart==0.0.32
