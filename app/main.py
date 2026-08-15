@@ -40,13 +40,27 @@ def health() -> dict:
     return {"status": "ok", "cached_documents": len(_cache)}
 
 
+async def _read_limited(file: UploadFile) -> bytes:
+    """Читает загрузку порциями и обрывает на первом байте сверх лимита.
+
+    Целиком через file.read() нельзя: тогда лимит проверяется уже после того, как
+    присланный файл занял память, и один запрос кладёт процесс.
+    """
+    chunks: list[bytes] = []
+    size = 0
+    while chunk := await file.read(1024 * 1024):
+        size += len(chunk)
+        if size > MAX_BYTES:
+            raise HTTPException(413, f"файл больше {MAX_BYTES} байт")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 @app.post("/digest", response_model=DigestResponse)
 async def digest(file: UploadFile = File(...)) -> DigestResponse:
-    data = await file.read()
+    data = await _read_limited(file)
     if not data:
         raise HTTPException(400, "пустой файл")
-    if len(data) > MAX_BYTES:
-        raise HTTPException(413, f"файл больше {MAX_BYTES} байт")
 
     # Один и тот же документ присылают по несколько раз, и каждый разбор стоит денег.
     key = hashlib.sha256(data).hexdigest()

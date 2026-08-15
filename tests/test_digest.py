@@ -183,3 +183,11 @@ def test_digest_endpoint_rejects_scan(monkeypatch):
 def test_digest_endpoint_rejects_empty():
     client = TestClient(app)
     assert client.post("/digest", files={"file": ("e.pdf", b"", "application/pdf")}).status_code == 400
+
+
+def test_digest_endpoint_rejects_oversized(monkeypatch):
+    """Лимит должен срабатывать на чтении, а не после того, как файл уже в памяти."""
+    monkeypatch.setattr("app.main.MAX_BYTES", 1024)
+    client = TestClient(app)
+    response = client.post("/digest", files={"file": ("big.pdf", b"x" * 5000, "application/pdf")})
+    assert response.status_code == 413
