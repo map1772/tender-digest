@@ -191,3 +191,61 @@ def test_digest_endpoint_rejects_oversized(monkeypatch):
     client = TestClient(app)
     response = client.post("/digest", files={"file": ("big.pdf", b"x" * 5000, "application/pdf")})
     assert response.status_code == 413
+
+
+def test_extract_text_stops_at_page_limit():
+    """Тысяча пустых страниц весит мало, лимит по знакам на них не срабатывает никогда."""
+    pdf = make_pdf([""] * 50)
+    text, pages, truncated = extract_text(pdf, max_chars=100_000, max_pages=5)
+    assert pages == 50
+    assert truncated, "превышение числа страниц должно помечаться как обрезка"
+
+
+def test_api_key_required_when_set(monkeypatch):
+    """Каждый разбор это платный запрос, поэтому закрытый ключом сервис не должен пускать без него."""
+    monkeypatch.setattr("app.main.API_KEY", "s3cret-key")
+    client = TestClient(app)
+    pdf = make_pdf(["Nachalnaya cena kontrakta 1000 rubley. " * 20])
+
+    denied = client.post("/digest", files={"file": ("t.pdf", pdf, "application/pdf")})
+    assert denied.status_code == 401
+
+    wrong = client.post("/digest", files={"file": ("t.pdf", pdf, "application/pdf")},
+                        headers={"X-API-Key": "wrong-key"})
+    assert wrong.status_code == 401
+
+
+def test_rate_limit_blocks_flood(monkeypatch):
+    from app.main import _hits
+
+    _hits.clear()
+    _cache.clear()
+    monkeypatch.setattr("app.main.API_KEY", "")
+    monkeypatch.setattr("app.main.RATE_PER_HOUR", 2)
+    monkeypatch.setattr("app.main.summarize", lambda *a, **k: (
+        Digest(contract_amount=Decimal("1")), "fake", {"prompt_tokens": 1, "completion_tokens": 1}))
+    client = TestClient(app)
+
+    codes = []
+    for n in range(3):
+        # разные файлы, иначе второй и третий возьмутся из кеша и лимит не проверится
+        pdf = make_pdf([f"Dokument nomer {n}. " * 30])
+        codes.append(client.post("/digest", files={"file": (f"{n}.pdf", pdf, "application/pdf")}).status_code)
+    assert codes[-1] == 429, codes
+
+
+def test_llm_error_hides_provider_body(monkeypatch):
+    """Тело ответа провайдера не должно уезжать клиенту: там бывают внутренние детали."""
+    class FakeResponse:
+        status_code = 402
+        text = 'organization org-secret-123 has insufficient quota'
+
+        def json(self):
+            return {}
+
+    monkeypatch.setenv("LLM_API_KEY", "x")
+    monkeypatch.setattr(llm.httpx, "post", lambda *a, **k: FakeResponse())
+    with pytest.raises(llm.LlmError) as error:
+        llm.summarize("текст документа")
+    assert "org-secret-123" not in str(error.value)
+    assert "402" in str(error.value)

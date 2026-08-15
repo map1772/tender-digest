@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from decimal import Decimal
@@ -9,6 +10,8 @@ from decimal import Decimal
 import httpx
 
 from .models import Digest
+
+log = logging.getLogger(__name__)
 
 PROMPT = """Ты разбираешь документацию российской госзакупки и заполняешь карточку.
 
@@ -93,7 +96,10 @@ def summarize(document: str, *, timeout: float = 120.0) -> tuple[Digest, str, di
         raise LlmError(f"модель недоступна: {exc}") from exc
 
     if response.status_code >= 400:
-        raise LlmError(f"модель ответила {response.status_code}: {response.text[:300]}")
+        # Тело ответа провайдера пишем в лог, но не отдаём клиенту: там встречаются
+        # идентификаторы организации и внутренние детали тарифа.
+        log.warning("модель ответила %s: %s", response.status_code, response.text[:500])
+        raise LlmError(f"модель ответила {response.status_code}, подробности в логе сервиса")
 
     body = response.json()
     try:
