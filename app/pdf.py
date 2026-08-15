@@ -22,11 +22,15 @@ class PdfError(ValueError):
     pass
 
 
-def extract_text(data: bytes, max_chars: int) -> tuple[str, int, bool]:
+def extract_text(data: bytes, max_chars: int, max_pages: int = 400) -> tuple[str, int, bool]:
     """Возвращает текст, число страниц и признак обрезки.
 
-    Обрезка нужна не ради аккуратности, а ради денег: документация госзакупки бывает
-    на сотни страниц, и целиком она стоит дороже, чем даёт пользы.
+    Обрезка по знакам нужна ради денег: документация госзакупки бывает на сотни
+    страниц, и целиком она стоит дороже, чем даёт пользы.
+
+    Лимит страниц закрывает другое: PDF из десятков тысяч пустых страниц весит
+    мегабайт, лимит по знакам на нём никогда не срабатывает, и разбор занимает
+    процесс надолго. Один такой файл кладёт сервис.
     """
     try:
         reader = PdfReader(io.BytesIO(data))
@@ -42,7 +46,9 @@ def extract_text(data: bytes, max_chars: int) -> tuple[str, int, bool]:
     chunks: list[str] = []
     total = 0
     truncated = False
-    for page in reader.pages:
+    if len(reader.pages) > max_pages:
+        truncated = True
+    for page in reader.pages[:max_pages]:
         try:
             text = page.extract_text() or ""
         except Exception:
